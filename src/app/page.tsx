@@ -9,6 +9,7 @@ import { ChatMessage, type Message } from "@/components/ChatMessage";
 import { ChatInput } from "@/components/ChatInput";
 import { Canvas } from "@/components/Canvas";
 import { FileUpload } from "@/components/FileUpload";
+import { Onboarding } from "@/components/Onboarding";
 import { StreamStatus, ErrorMessage } from "@/components/LoadingStates";
 import { useQueryHistory } from "@/hooks/useQueryHistory";
 import type { TableInfo } from "@/types";
@@ -24,6 +25,7 @@ export default function ChatPage() {
     const [streamStatus, setStreamStatus] = useState<string | null>(null);
     const [showUpload, setShowUpload] = useState(false);
     const [lastQuery, setLastQuery] = useState<string | null>(null);
+    const [showOnboarding, setShowOnboarding] = useState(false);
     const scrollRef = useRef<HTMLDivElement>(null);
     const { addEntry } = useQueryHistory();
 
@@ -40,7 +42,16 @@ export default function ChatPage() {
     useEffect(() => {
         setMounted(true);
         fetchTables();
+        // Show onboarding for first-time users
+        if (typeof window !== "undefined" && !localStorage.getItem("kksrag-onboarded")) {
+            setShowOnboarding(true);
+        }
     }, [fetchTables]);
+
+    const completeOnboarding = () => {
+        setShowOnboarding(false);
+        localStorage.setItem("kksrag-onboarded", "1");
+    };
 
     useEffect(() => {
         if (scrollRef.current) {
@@ -146,7 +157,17 @@ export default function ChatPage() {
                 {/* Chat column — full width or compressed when canvas is open */}
                 <div className={`flex flex-col h-full bg-background transition-all duration-500 ease-in-out ${canvasData ? "hidden md:flex md:w-[450px]" : "w-full"}`}>
                     <div ref={scrollRef} className="flex-1 overflow-y-auto p-4 md:p-12 space-y-8 md:space-y-12 no-scrollbar">
-                        {messages.length === 0 && <EmptyState />}
+                        {messages.length === 0 && showOnboarding && (
+                            <Onboarding
+                                onComplete={completeOnboarding}
+                                onUploadClick={() => setShowUpload(true)}
+                                onSampleQuery={(q) => {
+                                    completeOnboarding();
+                                    handleSubmit(undefined, q);
+                                }}
+                            />
+                        )}
+                        {messages.length === 0 && !showOnboarding && <EmptyState />}
 
                         <AnimatePresence>
                             {messages.map((msg, i) => {
