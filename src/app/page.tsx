@@ -1,14 +1,15 @@
 "use client";
 
 import { useState, useEffect, useRef, useCallback } from "react";
-import { Loader2 } from "lucide-react";
 import { AnimatePresence } from "framer-motion";
 import { Sidebar } from "@/components/Sidebar";
+import { MobileHeader } from "@/components/MobileHeader";
 import { EmptyState } from "@/components/EmptyState";
 import { ChatMessage, type Message } from "@/components/ChatMessage";
 import { ChatInput } from "@/components/ChatInput";
 import { Canvas } from "@/components/Canvas";
 import { FileUpload } from "@/components/FileUpload";
+import { StreamStatus, ErrorMessage } from "@/components/LoadingStates";
 import { useQueryHistory } from "@/hooks/useQueryHistory";
 import type { TableInfo } from "@/types";
 
@@ -22,6 +23,7 @@ export default function ChatPage() {
     const [tables, setTables] = useState<TableInfo[]>([]);
     const [streamStatus, setStreamStatus] = useState<string | null>(null);
     const [showUpload, setShowUpload] = useState(false);
+    const [lastQuery, setLastQuery] = useState<string | null>(null);
     const scrollRef = useRef<HTMLDivElement>(null);
     const { addEntry } = useQueryHistory();
 
@@ -55,6 +57,7 @@ export default function ChatPage() {
         setMessages((prev) => [...prev, userMessage]);
         setInput("");
         setIsLoading(true);
+        setLastQuery(query);
         setStreamStatus("Generating SQL...");
 
         // Build conversation history for context
@@ -79,7 +82,7 @@ export default function ChatPage() {
             if (!response.ok) {
                 setMessages((prev) => [...prev, {
                     role: "assistant",
-                    content: "I encountered an error while processing that.",
+                    content: data.error ?? "I encountered an error while processing that.",
                     error: data.error,
                     sql: data.sql,
                 }]);
@@ -106,7 +109,7 @@ export default function ChatPage() {
             const errMsg = err instanceof Error ? err.message : "Unknown error";
             setMessages((prev) => [...prev, {
                 role: "assistant",
-                content: "Network error. Check your connection.",
+                content: "Network error. Check your connection and try again.",
                 error: errMsg,
             }]);
         } finally {
@@ -115,10 +118,23 @@ export default function ChatPage() {
         }
     }, [input, messages, addEntry, fetchTables]);
 
+    const handleRetryLast = useCallback(() => {
+        if (lastQuery) {
+            handleSubmit(undefined, lastQuery);
+        }
+    }, [lastQuery, handleSubmit]);
+
     if (!mounted) return null;
 
     return (
-        <div className={`flex h-screen w-full bg-background text-foreground overflow-hidden ${isDark ? "dark" : ""}`}>
+        <div className={`flex flex-col md:flex-row h-screen w-full bg-background text-foreground overflow-hidden ${isDark ? "dark" : ""}`}>
+            {/* Mobile header (visible < md) */}
+            <MobileHeader
+                tables={tables}
+                onUploadClick={() => setShowUpload(true)}
+            />
+
+            {/* Desktop sidebar (visible >= md) */}
             <Sidebar
                 tables={tables}
                 isDark={isDark}
@@ -127,29 +143,40 @@ export default function ChatPage() {
             />
 
             <main className="flex-1 flex overflow-hidden relative">
-                <div className={`flex flex-col h-full bg-background transition-all duration-500 ease-in-out ${canvasData ? "w-[450px]" : "w-full"}`}>
-                    <div ref={scrollRef} className="flex-1 overflow-y-auto p-6 md:p-12 space-y-12 no-scrollbar">
+                {/* Chat column — full width or compressed when canvas is open */}
+                <div className={`flex flex-col h-full bg-background transition-all duration-500 ease-in-out ${canvasData ? "hidden md:flex md:w-[450px]" : "w-full"}`}>
+                    <div ref={scrollRef} className="flex-1 overflow-y-auto p-4 md:p-12 space-y-8 md:space-y-12 no-scrollbar">
                         {messages.length === 0 && <EmptyState />}
 
                         <AnimatePresence>
-                            {messages.map((msg, i) => (
-                                <ChatMessage
-                                    key={i}
-                                    message={msg}
-                                    onViewAnalysis={setCanvasData}
-                                    onSuggestionClick={(s) => handleSubmit(undefined, s)}
-                                />
-                            ))}
+                            {messages.map((msg, i) => {
+                                // Show error messages with retry
+                                if (msg.role === "assistant" && msg.error) {
+                                    return (
+                                        <ErrorMessage
+                                            key={i}
+                                            message={msg.content}
+                                            onRetry={handleRetryLast}
+                                            suggestions={["Try a simpler question", "Check your dataset columns"]}
+                                        />
+                                    );
+                                }
+                                return (
+                                    <ChatMessage
+                                        key={i}
+                                        message={msg}
+                                        onViewAnalysis={setCanvasData}
+                                        onSuggestionClick={(s) => handleSubmit(undefined, s)}
+                                    />
+                                );
+                            })}
                         </AnimatePresence>
 
-                        {isLoading && (
-                            <div className="flex items-center gap-4 text-muted-foreground p-6 bg-muted/10 rounded-3xl w-fit animate-pulse">
-                                <Loader2 className="w-5 h-5 animate-spin text-primary" />
-                                <span className="text-xs font-black uppercase tracking-[0.2em]">
-                                    {streamStatus ?? "Analyzing Data"}
-                                </span>
-                            </div>
-                        )}
+                        <AnimatePresence>
+                            {isLoading && streamStatus && (
+                                <StreamStatus status={streamStatus} />
+                            )}
+                        </AnimatePresence>
                     </div>
 
                     <ChatInput
@@ -160,6 +187,7 @@ export default function ChatPage() {
                     />
                 </div>
 
+                {/* Canvas panel — full screen on mobile, side panel on desktop */}
                 <AnimatePresence>
                     {canvasData && (
                         <Canvas
