@@ -1,16 +1,37 @@
-import { GoogleGenerativeAI } from "@google/generative-ai";
+import { GoogleGenerativeAI, type GenerativeModel } from '@google/generative-ai';
 
-const genAI = new GoogleGenerativeAI(process.env.GOOGLE_GEMINI_API_KEY || "");
-const model = genAI.getGenerativeModel({ model: "gemini-2.0-flash-exp" });
+let model: GenerativeModel | null = null;
 
-export const SQL_PROMPT = (schema: string, message: string) => `
-You are a data analyst. Based on the user's question and the table schema below, generate a SQL query (DuckDB syntax) and suggest a visualization.
+function getModel(): GenerativeModel {
+    if (!model) {
+        const apiKey = process.env.GOOGLE_GEMINI_API_KEY;
+        if (!apiKey) {
+            throw new Error('GOOGLE_GEMINI_API_KEY environment variable is not set. See .env.example for setup instructions.');
+        }
+        const genAI = new GoogleGenerativeAI(apiKey);
+        model = genAI.getGenerativeModel({ model: 'gemini-2.0-flash-exp' });
+    }
+    return model;
+}
+
+export interface ConversationTurn {
+    role: 'user' | 'assistant';
+    content: string;
+    sql?: string;
+}
+
+export const SQL_PROMPT = (schema: string, message: string, history?: ConversationTurn[]): string => {
+    const historyBlock = history?.length
+        ? `\nConversation History (use this for context like "show me more", "break that down", etc.):\n${history.map(h => `${h.role}: ${h.content}${h.sql ? ` [Generated SQL: ${h.sql}]` : ''}`).join('\n')}\n`
+        : '';
+
+    return `You are a data analyst. Based on the user's question and the table schema below, generate a SQL query (DuckDB syntax) and suggest a visualization.
 
 CRITICAL: You MUST return ONLY a valid JSON object. No Markdown, no backticks, no preamble.
 JSON structure:
 {
   "sql": "SELECT ...",
-  "chart_type": "bar" | "line" | "pie" | "none", 
+  "chart_type": "bar" | "line" | "pie" | "none",
   "x_axis": "column_name",
   "y_axis": "column_name"
 }
@@ -31,12 +52,13 @@ Interpretation Rules:
 
 Schema:
 ${schema}
-
+${historyBlock}
 User Question: ${message}
 `;
+};
 
-export const EXPLAIN_PROMPT = (data: string, message: string) => `
-Summarize the following data in a friendly, concise way for a business user. 
+export const EXPLAIN_PROMPT = (data: string, message: string): string => `
+Summarize the following data in a friendly, concise way for a business user.
 Provide 2-3 follow-up questions they might want to ask next.
 
 CRITICAL: Return ONLY a valid JSON object. No Markdown.
@@ -50,7 +72,7 @@ User Question: ${message}
 Data: ${data}
 `;
 
-export async function askGemini(prompt: string) {
-  const result = await model.generateContent(prompt);
-  return result.response.text().trim();
+export async function askGemini(prompt: string): Promise<string> {
+    const result = await getModel().generateContent(prompt);
+    return result.response.text().trim();
 }
