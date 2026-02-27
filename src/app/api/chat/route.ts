@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { SQL_PROMPT, EXPLAIN_PROMPT, askGemini } from '@/lib/gemini';
 import { initUserDb, getUserTablesSchema, executeUserQuery } from '@/lib/duckdb';
+import { retrySqlGeneration } from '@/lib/ai/retry';
 import { requireAuth } from '@/lib/auth';
 import { saveQueryHistory } from '@/lib/db/queries';
 import { checkRateLimit } from '@/lib/rate-limit';
@@ -82,7 +83,7 @@ export async function POST(req: NextRequest) {
             return errorResponse('AI generated invalid instructions. Please try rephrasing your question.', 500);
         }
 
-        const { sql, chart_type, x_axis, y_axis } = sqlData as {
+        let { sql, chart_type, x_axis, y_axis } = sqlData as {
             sql: string;
             chart_type: string;
             x_axis: string;
@@ -93,18 +94,44 @@ export async function POST(req: NextRequest) {
             return errorResponse('Could not generate a valid query for that question. Please try rephrasing.', 400);
         }
 
-        // 2. Execute SQL against user's DuckDB instance
+        // 2. Execute SQL against user's DuckDB instance (with retry on failure)
         let data;
+        let wasRetried = false;
         try {
             data = await executeUserQuery(userId, sql);
         } catch (dbError: unknown) {
             const dbMessage = dbError instanceof Error ? dbError.message : 'Unknown database error';
-            log('error', 'Query execution failed', { sql, error: dbMessage, userId });
-            return errorResponse(
-                'The generated query could not be executed. Please try rephrasing your question.',
-                500,
-                process.env.NODE_ENV === 'development' ? sql : undefined
-            );
+            log('warn', 'Query execution failed, attempting retry', { sql, error: dbMessage, userId });
+
+            // Retry: send error back to AI for self-correction
+            const retryResult = await retrySqlGeneration(schema, message, sql, dbMessage);
+
+            if (retryResult) {
+                try {
+                    data = await executeUserQuery(userId, retryResult.sql);
+                    sql = retryResult.sql;
+                    chart_type = retryResult.chart_type;
+                    x_axis = retryResult.x_axis;
+                    y_axis = retryResult.y_axis;
+                    wasRetried = true;
+                    log('info', 'Retry query succeeded', { userId });
+                } catch (retryDbError: unknown) {
+                    const retryMsg = retryDbError instanceof Error ? retryDbError.message : 'Unknown error';
+                    log('error', 'Retry query also failed', { sql: retryResult.sql, error: retryMsg, userId });
+                    return errorResponse(
+                        'The generated query could not be executed. Please try rephrasing your question.',
+                        500,
+                        process.env.NODE_ENV === 'development' ? sql : undefined,
+                    );
+                }
+            } else {
+                log('error', 'Query execution failed, retry did not produce fix', { sql, error: dbMessage, userId });
+                return errorResponse(
+                    'The generated query could not be executed. Please try rephrasing your question.',
+                    500,
+                    process.env.NODE_ENV === 'development' ? sql : undefined,
+                );
+            }
         }
 
         // Serialize BigInts for JSON transport
@@ -128,7 +155,7 @@ export async function POST(req: NextRequest) {
         }
 
         const totalMs = Date.now() - startTime;
-        log('info', 'Query completed', { totalMs, rowCount: serializedData.length, ip, userId });
+        log('info', 'Query completed', { totalMs, rowCount: serializedData.length, ip, userId, wasRetried });
 
         // Persist query history to Supabase (fire and forget)
         saveQueryHistory(
@@ -148,6 +175,7 @@ export async function POST(req: NextRequest) {
             summary: explainData.summary,
             suggestions: explainData.suggestions,
             chartConfig: { type: chart_type, xAxis: x_axis, yAxis: y_axis },
+            wasRetried,
         });
     } catch (error: unknown) {
         const message = error instanceof Error ? error.message : 'An unexpected error occurred';
