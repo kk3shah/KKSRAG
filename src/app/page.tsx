@@ -8,6 +8,7 @@ import { EmptyState } from "@/components/EmptyState";
 import { ChatMessage, type Message } from "@/components/ChatMessage";
 import { ChatInput } from "@/components/ChatInput";
 import { Canvas } from "@/components/Canvas";
+import { FileUpload } from "@/components/FileUpload";
 import { useQueryHistory } from "@/hooks/useQueryHistory";
 import type { TableInfo } from "@/types";
 
@@ -20,6 +21,7 @@ export default function ChatPage() {
     const [canvasData, setCanvasData] = useState<Message | null>(null);
     const [tables, setTables] = useState<TableInfo[]>([]);
     const [streamStatus, setStreamStatus] = useState<string | null>(null);
+    const [showUpload, setShowUpload] = useState(false);
     const scrollRef = useRef<HTMLDivElement>(null);
     const { addEntry } = useQueryHistory();
 
@@ -121,6 +123,7 @@ export default function ChatPage() {
                 tables={tables}
                 isDark={isDark}
                 onToggleTheme={() => setIsDark(!isDark)}
+                onUploadClick={() => setShowUpload(true)}
             />
 
             <main className="flex-1 flex overflow-hidden relative">
@@ -166,6 +169,18 @@ export default function ChatPage() {
                     )}
                 </AnimatePresence>
             </main>
+
+            {/* File Upload Modal */}
+            <AnimatePresence>
+                {showUpload && (
+                    <FileUpload
+                        onClose={() => setShowUpload(false)}
+                        onUploadComplete={() => {
+                            fetchTables();
+                        }}
+                    />
+                )}
+            </AnimatePresence>
 
             <style jsx global>{`
                 .no-scrollbar::-webkit-scrollbar { display: none; }

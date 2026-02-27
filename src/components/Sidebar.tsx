@@ -1,6 +1,7 @@
 "use client";
 
-import { Database, Table2, ChevronRight, Sun, Moon } from "lucide-react";
+import { Database, Table2, ChevronRight, Sun, Moon, Upload } from "lucide-react";
+import { UserButton } from "@clerk/nextjs";
 import { motion, AnimatePresence } from "framer-motion";
 import { useState } from "react";
 import type { TableInfo } from "@/types";
@@ -9,9 +10,10 @@ interface SidebarProps {
     tables: TableInfo[];
     isDark: boolean;
     onToggleTheme: () => void;
+    onUploadClick?: () => void;
 }
 
-export function Sidebar({ tables, isDark, onToggleTheme }: SidebarProps) {
+export function Sidebar({ tables, isDark, onToggleTheme, onUploadClick }: SidebarProps) {
     const [expandedTable, setExpandedTable] = useState<string | null>(null);
 
     return (
@@ -20,7 +22,15 @@ export function Sidebar({ tables, isDark, onToggleTheme }: SidebarProps) {
                 <div className="w-8 h-8 bg-primary/10 rounded-lg flex items-center justify-center text-primary">
                     <Database className="w-5 h-5" />
                 </div>
-                <span className="font-bold text-lg tracking-tight">KKSRAG</span>
+                <span className="font-bold text-lg tracking-tight flex-1">KKSRAG</span>
+                <UserButton
+                    afterSignOutUrl="/sign-in"
+                    appearance={{
+                        elements: {
+                            avatarBox: "w-8 h-8",
+                        },
+                    }}
+                />
             </div>
 
             <div className="flex-1 overflow-y-auto px-4 space-y-4 scrollbar-hide">
@@ -57,11 +67,23 @@ export function Sidebar({ tables, isDark, onToggleTheme }: SidebarProps) {
                                 </AnimatePresence>
                             </div>
                         ))}
+                        {tables.length === 0 && (
+                            <p className="text-xs text-muted-foreground/60 px-3 py-2">No datasets uploaded yet</p>
+                        )}
                     </div>
                 </div>
             </div>
 
-            <div className="p-4 border-t border-border">
+            <div className="p-4 border-t border-border space-y-2">
+                {onUploadClick && (
+                    <button
+                        onClick={onUploadClick}
+                        className="w-full flex items-center justify-center gap-3 px-4 py-3 rounded-xl bg-primary/10 hover:bg-primary/20 transition-all text-xs font-bold uppercase tracking-widest text-primary"
+                    >
+                        <Upload className="w-4 h-4" />
+                        Upload CSV
+                    </button>
+                )}
                 <button onClick={onToggleTheme} className="w-full flex items-center justify-center gap-3 px-4 py-3 rounded-xl bg-muted/30 hover:bg-muted transition-all text-xs font-bold uppercase tracking-widest">
                     {isDark ? <Sun className="w-4 h-4" /> : <Moon className="w-4 h-4" />}
                     {isDark ? "Light Mode" : "Dark Mode"}
