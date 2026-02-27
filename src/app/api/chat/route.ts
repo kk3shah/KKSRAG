@@ -1,6 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { SQL_PROMPT, EXPLAIN_PROMPT, askGemini } from '@/lib/gemini';
-import { initDb, getTablesSchema, executeQuery } from '@/lib/duckdb';
+import { initUserDb, getUserTablesSchema, executeUserQuery } from '@/lib/duckdb';
+import { requireAuth } from '@/lib/auth';
+import { saveQueryHistory } from '@/lib/db/queries';
 import { checkRateLimit } from '@/lib/rate-limit';
 import { log } from '@/lib/logger';
 import type { ChatErrorResponse } from '@/types';
@@ -21,11 +23,16 @@ export async function POST(req: NextRequest) {
     const startTime = Date.now();
     const ip = getClientIp(req);
 
+    // Auth check
+    const authResult = await requireAuth();
+    if (authResult.error) return authResult.error;
+    const { userId } = authResult;
+
     try {
         // Rate limiting
         const rateResult = checkRateLimit(ip);
         if (!rateResult.allowed) {
-            log('warn', 'Rate limit exceeded', { ip });
+            log('warn', 'Rate limit exceeded', { ip, userId });
             return errorResponse('Too many requests. Please wait a moment and try again.', 429);
         }
 
@@ -49,9 +56,9 @@ export async function POST(req: NextRequest) {
             return errorResponse(`Message too long. Maximum ${MAX_MESSAGE_LENGTH} characters.`, 400);
         }
 
-        // Initialize database and get schema
-        await initDb();
-        const schema = await getTablesSchema();
+        // Initialize user's database and get schema
+        await initUserDb(userId);
+        const schema = await getUserTablesSchema(userId);
 
         // Build conversation context from history
         const conversationHistory = history?.slice(-5).map(h => ({
@@ -71,7 +78,7 @@ export async function POST(req: NextRequest) {
         try {
             sqlData = JSON.parse(cleanedSqlJson);
         } catch {
-            log('warn', 'Failed to parse SQL JSON from AI', { response: cleanedSqlJson.slice(0, 200) });
+            log('warn', 'Failed to parse SQL JSON from AI', { response: cleanedSqlJson.slice(0, 200), userId });
             return errorResponse('AI generated invalid instructions. Please try rephrasing your question.', 500);
         }
 
@@ -86,13 +93,13 @@ export async function POST(req: NextRequest) {
             return errorResponse('Could not generate a valid query for that question. Please try rephrasing.', 400);
         }
 
-        // 2. Execute SQL
+        // 2. Execute SQL against user's DuckDB instance
         let data;
         try {
-            data = await executeQuery(sql);
+            data = await executeUserQuery(userId, sql);
         } catch (dbError: unknown) {
             const dbMessage = dbError instanceof Error ? dbError.message : 'Unknown database error';
-            log('error', 'Query execution failed', { sql, error: dbMessage });
+            log('error', 'Query execution failed', { sql, error: dbMessage, userId });
             return errorResponse(
                 'The generated query could not be executed. Please try rephrasing your question.',
                 500,
@@ -121,7 +128,19 @@ export async function POST(req: NextRequest) {
         }
 
         const totalMs = Date.now() - startTime;
-        log('info', 'Query completed', { totalMs, rowCount: serializedData.length, ip });
+        log('info', 'Query completed', { totalMs, rowCount: serializedData.length, ip, userId });
+
+        // Persist query history to Supabase (fire and forget)
+        saveQueryHistory(
+            userId,
+            message,
+            sql,
+            explainData.summary?.slice(0, 500),
+            serializedData.length,
+            totalMs,
+        ).catch(() => {
+            // Non-critical — already logged inside saveQueryHistory
+        });
 
         return NextResponse.json({
             sql,
@@ -133,7 +152,7 @@ export async function POST(req: NextRequest) {
     } catch (error: unknown) {
         const message = error instanceof Error ? error.message : 'An unexpected error occurred';
         const totalMs = Date.now() - startTime;
-        log('error', 'Unhandled API error', { error: message, totalMs, ip });
+        log('error', 'Unhandled API error', { error: message, totalMs, ip, userId });
 
         return errorResponse(
             process.env.NODE_ENV === 'development'

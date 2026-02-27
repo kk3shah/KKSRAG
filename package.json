@@ -14,7 +14,9 @@
   "author": "",
   "license": "ISC",
   "dependencies": {
+    "@clerk/nextjs": "^6.38.3",
     "@google/generative-ai": "^0.24.1",
+    "@supabase/supabase-js": "^2.98.0",
     "@tailwindcss/postcss": "^4.1.18",
     "@types/node": "^25.0.9",
     "@types/react": "^19.2.8",

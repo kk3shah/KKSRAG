@@ -1,12 +1,18 @@
 import { NextResponse } from 'next/server';
-import { initDb, getTablesSchema } from '@/lib/duckdb';
+import { initUserDb, getUserTablesSchema } from '@/lib/duckdb';
+import { requireAuth } from '@/lib/auth';
 import { log } from '@/lib/logger';
 import type { TablesResponse, TableInfo } from '@/types';
 
 export async function GET() {
+    // Auth check
+    const authResult = await requireAuth();
+    if (authResult.error) return authResult.error;
+    const { userId } = authResult;
+
     try {
-        await initDb();
-        const schema = await getTablesSchema();
+        await initUserDb(userId);
+        const schema = await getUserTablesSchema(userId);
 
         if (!schema) {
             return NextResponse.json({ tables: [] } satisfies TablesResponse);
@@ -22,7 +28,7 @@ export async function GET() {
         return NextResponse.json({ tables } satisfies TablesResponse);
     } catch (error: unknown) {
         const message = error instanceof Error ? error.message : 'Unknown error';
-        log('error', 'Failed to fetch tables', { error: message });
+        log('error', 'Failed to fetch tables', { error: message, userId });
 
         return NextResponse.json(
             { error: process.env.NODE_ENV === 'development' ? message : 'Failed to load table information.' },
