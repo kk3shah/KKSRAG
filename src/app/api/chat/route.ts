@@ -5,6 +5,7 @@ import { retrySqlGeneration } from '@/lib/ai/retry';
 import { requireAuth } from '@/lib/auth';
 import { saveQueryHistory } from '@/lib/db/queries';
 import { checkRateLimit } from '@/lib/rate-limit';
+import { checkQueryLimit } from '@/lib/billing/limits';
 import { log } from '@/lib/logger';
 import { RequestMetrics, recordRequestMetric } from '@/lib/metrics';
 import type { ChatErrorResponse } from '@/types';
@@ -32,11 +33,24 @@ export async function POST(req: NextRequest) {
     const { userId } = authResult;
 
     try {
-        // Rate limiting
+        // Rate limiting (per-IP)
         const rateResult = checkRateLimit(ip);
         if (!rateResult.allowed) {
             log('warn', 'Rate limit exceeded', { ip, userId });
             return errorResponse('Too many requests. Please wait a moment and try again.', 429);
+        }
+
+        // Billing: daily query limit check
+        const queryLimit = await checkQueryLimit(userId);
+        if (!queryLimit.allowed) {
+            log('info', 'Daily query limit reached', { userId, used: queryLimit.used, limit: queryLimit.limit });
+            return NextResponse.json(
+                {
+                    error: `You've reached your daily query limit (${queryLimit.used}/${queryLimit.limit}). Upgrade your plan for more queries.`,
+                    upgradeRequired: true,
+                },
+                { status: 429 },
+            );
         }
 
         // Input validation
