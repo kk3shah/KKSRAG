@@ -1,7 +1,8 @@
 import { NextResponse } from 'next/server';
+import { getAggregateMetrics } from '@/lib/metrics';
 
 export async function GET() {
-    const checks: Record<string, string> = {
+    const checks: Record<string, unknown> = {
         status: 'ok',
         timestamp: new Date().toISOString(),
     };
@@ -20,12 +21,15 @@ export async function GET() {
         await duckdb.initDb();
         const schema = await duckdb.getTablesSchema();
         checks.duckdb = 'ok';
-        checks.tables = String(schema ? schema.split('\n\n').filter(Boolean).length : 0);
+        checks.tables = schema ? schema.split('\n\n').filter(Boolean).length : 0;
     } catch (err: unknown) {
         checks.duckdb = 'error';
         checks.duckdb_error = err instanceof Error ? err.message : 'Unknown';
         checks.status = 'degraded';
     }
+
+    // Performance metrics
+    checks.metrics = getAggregateMetrics();
 
     const statusCode = checks.status === 'ok' ? 200 : 503;
     return NextResponse.json(checks, { status: statusCode });

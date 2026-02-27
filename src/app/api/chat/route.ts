@@ -6,6 +6,7 @@ import { requireAuth } from '@/lib/auth';
 import { saveQueryHistory } from '@/lib/db/queries';
 import { checkRateLimit } from '@/lib/rate-limit';
 import { log } from '@/lib/logger';
+import { RequestMetrics, recordRequestMetric } from '@/lib/metrics';
 import type { ChatErrorResponse } from '@/types';
 
 const MAX_MESSAGE_LENGTH = 2000;
@@ -23,6 +24,7 @@ function errorResponse(error: string, status: number, sql?: string): NextRespons
 export async function POST(req: NextRequest) {
     const startTime = Date.now();
     const ip = getClientIp(req);
+    const metrics = new RequestMetrics();
 
     // Auth check
     const authResult = await requireAuth();
@@ -69,8 +71,10 @@ export async function POST(req: NextRequest) {
         }));
 
         // 1. Generate SQL
+        metrics.startPhase('sql_generation');
         const sqlPromptText = SQL_PROMPT(schema, message, conversationHistory);
         const sqlResponseText = await askGemini(sqlPromptText);
+        metrics.endPhase('sql_generation');
 
         // Clean potential markdown blocks
         const cleanedSqlJson = sqlResponseText.replace(/```json|```/g, '').trim();
@@ -95,10 +99,12 @@ export async function POST(req: NextRequest) {
         }
 
         // 2. Execute SQL against user's DuckDB instance (with retry on failure)
+        metrics.startPhase('sql_execution');
         let data;
         let wasRetried = false;
         try {
             data = await executeUserQuery(userId, sql);
+            metrics.endPhase('sql_execution');
         } catch (dbError: unknown) {
             const dbMessage = dbError instanceof Error ? dbError.message : 'Unknown database error';
             log('warn', 'Query execution failed, attempting retry', { sql, error: dbMessage, userId });
@@ -140,8 +146,10 @@ export async function POST(req: NextRequest) {
         ));
 
         // 3. Explain Results
+        metrics.startPhase('explain');
         const explainPromptText = EXPLAIN_PROMPT(JSON.stringify(serializedData.slice(0, 5)), message);
         const explainResponseText = await askGemini(explainPromptText);
+        metrics.endPhase('explain');
         const cleanedExplainJson = explainResponseText.replace(/```json|```/g, '').trim();
 
         let explainData: { summary: string; suggestions: string[] };
@@ -155,6 +163,8 @@ export async function POST(req: NextRequest) {
         }
 
         const totalMs = Date.now() - startTime;
+        recordRequestMetric(totalMs, false);
+        metrics.summarize({ rowCount: serializedData.length, ip, userId, wasRetried });
         log('info', 'Query completed', { totalMs, rowCount: serializedData.length, ip, userId, wasRetried });
 
         // Persist query history to Supabase (fire and forget)
@@ -180,6 +190,7 @@ export async function POST(req: NextRequest) {
     } catch (error: unknown) {
         const message = error instanceof Error ? error.message : 'An unexpected error occurred';
         const totalMs = Date.now() - startTime;
+        recordRequestMetric(totalMs, true);
         log('error', 'Unhandled API error', { error: message, totalMs, ip, userId });
 
         return errorResponse(
