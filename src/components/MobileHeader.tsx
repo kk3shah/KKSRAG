@@ -1,10 +1,12 @@
 "use client";
 
-import { Menu, X, Database } from "lucide-react";
+import { Menu, X, Database, User } from "lucide-react";
 import { UserButton } from "@clerk/nextjs";
 import { motion, AnimatePresence } from "framer-motion";
 import { useState } from "react";
 import type { TableInfo } from "@/types";
+
+const isDevBypass = process.env.NEXT_PUBLIC_DEV_AUTH_BYPASS === "true";
 
 interface MobileHeaderProps {
     tables: TableInfo[];
@@ -28,12 +30,16 @@ export function MobileHeader({ tables, onUploadClick }: MobileHeaderProps) {
                     <Database className="w-5 h-5 text-primary" />
                     <span className="font-bold text-base tracking-tight">KKSRAG</span>
                 </div>
-                <UserButton
-                    afterSignOutUrl="/sign-in"
-                    appearance={{
-                        elements: { avatarBox: "w-8 h-8" },
-                    }}
-                />
+                {isDevBypass ? (
+                    <div className="w-8 h-8 bg-amber-500/20 rounded-full flex items-center justify-center" title="Dev Mode">
+                        <User className="w-4 h-4 text-amber-500" />
+                    </div>
+                ) : (
+                    <UserButton
+                        afterSignOutUrl="/sign-in"
+                        appearance={{ elements: { avatarBox: "w-8 h-8" } }}
+                    />
+                )}
             </header>
 
             {/* Mobile drawer */}
