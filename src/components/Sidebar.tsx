@@ -1,10 +1,21 @@
 "use client";
 
-import { Database, Table2, ChevronRight, Sun, Moon, Upload } from "lucide-react";
+import { Database, Table2, ChevronRight, Sun, Moon, Upload, User } from "lucide-react";
 import { UserButton } from "@clerk/nextjs";
 import { motion, AnimatePresence } from "framer-motion";
 import { useState } from "react";
 import type { TableInfo } from "@/types";
+
+const isDevBypass = process.env.NEXT_PUBLIC_DEV_AUTH_BYPASS === "true";
+
+function ClerkUserButton() {
+    return (
+        <UserButton
+            afterSignOutUrl="/sign-in"
+            appearance={{ elements: { avatarBox: "w-8 h-8" } }}
+        />
+    );
+}
 
 interface SidebarProps {
     tables: TableInfo[];
@@ -23,14 +34,13 @@ export function Sidebar({ tables, isDark, onToggleTheme, onUploadClick }: Sideba
                     <Database className="w-5 h-5" />
                 </div>
                 <span className="font-bold text-lg tracking-tight flex-1">KKSRAG</span>
-                <UserButton
-                    afterSignOutUrl="/sign-in"
-                    appearance={{
-                        elements: {
-                            avatarBox: "w-8 h-8",
-                        },
-                    }}
-                />
+                {isDevBypass ? (
+                    <div className="w-8 h-8 bg-amber-500/20 rounded-full flex items-center justify-center" title="Dev Mode">
+                        <User className="w-4 h-4 text-amber-500" />
+                    </div>
+                ) : (
+                    <ClerkUserButton />
+                )}
             </div>
 
             <div className="flex-1 overflow-y-auto px-4 space-y-4 scrollbar-hide">
